@@ -1,12 +1,11 @@
 package main
 
 import (
-	"context"
+	"bufio"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/pkg/term/termios"
 	"golang.org/x/sys/unix"
@@ -28,6 +27,15 @@ var registers struct {
 	PC,
 	COND,
 	COUNT uint16
+}
+
+// these are memory mapped special registers
+var special_registers = struct {
+	KBSR, /* keyboard status register */
+	KBDR uint16 /* keyboard data register */
+}{
+	0xFE00,
+	0xFE02,
 }
 
 // opcodes
@@ -61,35 +69,73 @@ var flags = struct {
 }
 
 var orig_terminal_config unix.Termios
+var stdinReader = bufio.NewReader(os.Stdin)
 
 func main() {
 	args := os.Args[1:]
 	if len(args) < 1 {
-		fmt.Println("lc3 [image-file1] ...")
+		log.Println("lc3 [image-file1] ...")
 		os.Exit(2)
 	}
 
 	for _, arg := range args {
 		err := read_program(arg)
 		if err != nil {
-			fmt.Printf("failed to load image: %s\n", arg)
-			os.Exit(1)
+			log.Fatalln("failed to load image: %s\n", arg)
 		}
 
 	}
 
-	//capture ctrl c and ctrl z
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-	go func() {
-		<-ctx.Done()
-		handle_interrupt()
-	}()
+	defer restore_input_buffering()
 
 	registers.COND = flags.ZRO
 	registers.PC = 0x3000
 
-	// select {}
+	running := true
+	for running {
+		instr, err := mem_read(registers.PC)
+		if err != nil {
+			log.Fatalf("error reading instruction: %s\n",err)
+		}
+
+		op := *instr >> 12
+		switch op {
+
+		}
+	}
+
+}
+
+func mem_read(addr uint16) (*uint16, error) {
+
+	if addr == special_registers.KBSR {
+
+		if ok, err := check_key(); err == nil && ok > 0 {
+
+			special_registers.KBSR = 0x8000
+
+			char, _, err := stdinReader.ReadRune()
+			if err != nil {
+				return nil, err
+			}
+
+			special_registers.KBDR = uint16(char)
+
+		} else {
+			special_registers.KBSR = 0
+		}
+	}
+
+	return &memory[addr], nil
+}
+
+func check_key() (int, error) {
+	var readFds unix.FdSet
+	readFds.Zero()
+	readFds.Set(int(os.Stdin.Fd()))
+
+	var timeout unix.Timeval
+	return unix.Select(1, &readFds, nil, nil, &timeout)
 }
 
 func read_program(file_name string) error {
@@ -97,7 +143,7 @@ func read_program(file_name string) error {
 	if err != nil {
 		return err
 	}
-	
+
 	return read_program_file(&file)
 
 }
@@ -119,12 +165,6 @@ func read_program_file(file *[]byte) error {
 
 	return nil
 
-}
-
-func handle_interrupt() {
-	restore_input_buffering()
-	fmt.Println("")
-	os.Exit(-2)
 }
 
 func disable_input_buffering() {
