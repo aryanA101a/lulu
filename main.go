@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"flag"
 	"time"
 
 	"fmt"
@@ -96,25 +97,48 @@ var stdoutWriter = io.Writer(os.Stdout)
 var keyBuffer = make(chan byte, 1)
 
 func main() {
-	// f, err := os.OpenFile("logs.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	// if err != nil {
-	// 	log.Fatalf("error opening file: %v", err)
-	// }
-	// defer f.Close()
-	// log.SetOutput(f)
 
-	args := os.Args[1:]
-	if len(args) < 1 {
-		//log.Println("lc3 [image-file1] ...")
-		os.Exit(2)
+	var (
+		verboseFlag,
+		helpFlag bool
+		logfile string
+	)
+	flag.BoolVar(&verboseFlag, "v", false, "logging")
+	flag.BoolVar(&helpFlag, "h", false, "help")
+	flag.StringVar(&logfile, "logfile", "", "logfile")
+	flag.Usage = func() {
+		fmt.Println("usageText")
 	}
-	for _, arg := range args {
-		err := read_program(arg)
-		if err != nil {
-			log.Panicf("failed to load image: %s\n", arg)
+
+	flag.Parse()
+	if helpFlag || flag.NArg() != 1 {
+		flag.Usage()
+		return
+	}
+
+	if verboseFlag {
+		if logfile != "" {
+			f, err := os.OpenFile(logfile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+			defer f.Close()
+			if err != nil {
+				log.Printf("Error opening logfile: %v\n", err)
+				f.Close()
+				os.Exit(2)
+			}
+			log.SetOutput(f)
 		}
 
+	} else {
+		log.SetOutput(io.Discard)
 	}
+
+	inPath := flag.Args()[0]
+	err := read_program(inPath)
+	if err != nil {
+		fmt.Printf("Error opening file(%s): %v\n", inPath, err)
+		os.Exit(2)
+	}
+
 	enable_raw_mode()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -136,84 +160,89 @@ func main() {
 		switch op {
 
 		case OP_ADD:
-			//log.Println("add")
 			dr := (instr >> 9) & 0b111
-			r1 := (instr >> 6) & 0b111
-
+			sr1 := (instr >> 6) & 0b111
 			imm_flag := (instr >> 5) & 0b1
 
 			if imm_flag == 1 {
 				imm5 := sext((instr)&0x1F, 5)
-				register[dr] = register[r1] + imm5
+				log.Printf("0x%04x ADD: dr=%03b sr1=%03b imm5=0x%02x", register[PC], dr, sr1, imm5)
+				register[dr] = register[sr1] + imm5
 			} else {
-				r2 := (instr) & 0b111
-				register[dr] = register[r1] + register[r2]
+				sr2 := (instr) & 0b111
+				log.Printf("0x%04x ADD: dr=%03b sr1=%03b r1=%03b", register[PC], dr, sr1, sr2)
+				register[dr] = register[sr1] + register[sr2]
 			}
 
 			update_flags(dr)
 
 		case OP_AND:
-			//log.Println("and")
 
 			dr := (instr >> 9) & 0b111
 			sr1 := (instr >> 6) & 0b111
-
 			imm_flag := (instr >> 5) & 0b1
 
 			if imm_flag == 1 {
 				imm5 := sext((instr)&0b11111, 5)
+				log.Printf("0x%04x AND: dr=%03b sr1=%03b imm5=0x%02x", register[PC], dr, sr1, imm5)
 				register[dr] = register[sr1] & imm5
 			} else {
 				sr2 := (instr) & 0b111
+				log.Printf("0x%04x AND: dr=%03b sr1=%03b r1=%03b", register[PC], dr, sr1, sr2)
 				register[dr] = register[sr1] & register[sr2]
 			}
 
 			update_flags(dr)
 
 		case OP_NOT:
-			//log.Println("not")
 
 			dr := (instr >> 9) & 0b111
 			sr := (instr >> 6) & 0b111
+
+			log.Printf("0x%04x NOT: dr=%03b sr=%03b", register[PC], dr, sr)
 
 			register[dr] = ^register[sr]
 			update_flags(dr)
 
 		case OP_BR:
-			// log.Println("br")
 
 			nzp := (instr >> 9) & 0b111
 			pcoffset9 := (instr) & 0x1FF
 			cond := register[COND]
+
+			log.Printf("0x%04x BR: nzp=%03b pcoffset9=0x%03x", register[PC], nzp, pcoffset9)
 
 			if (nzp & cond) != 0 {
 				register[PC] += sext(pcoffset9, 9)
 			}
 
 		case OP_JMP:
-			//log.Println("jmp")
-
 			br := ((instr) >> 6) & 0b111
+
+			log.Printf("0x%04x JMP: br=%03b", register[PC], br)
+
 			register[PC] = register[br]
 
 		case OP_JSR:
-			//log.Println("jsr")
 
 			register[R7] = register[PC]
 
 			bit11 := (instr >> 11) & 0b1
 			if bit11 == 1 {
 				pcoffset11 := (instr) & 0x7FF
+				log.Printf("0x%04x JSR: pcoffset11=0x%03x", register[PC], pcoffset11)
 				register[PC] += sext(pcoffset11, 11)
 			} else {
 				br := (instr >> 6) & 0b111
+				log.Printf("0x%04x JSRR: br=%03b", register[PC], br)
 				register[PC] = register[br]
 			}
 		case OP_LD:
-			//log.Println("ld")
 
 			dr := (instr >> 9) & 0b111
 			pcoffset9 := (instr) & 0x1FF
+
+			log.Printf("0x%04x LD: dr=%03b pcoffset9=0x%03x", register[PC], dr, pcoffset9)
 
 			register[dr] = mem_read(register[PC] + sext(pcoffset9, 9))
 			update_flags(dr)
@@ -222,59 +251,66 @@ func main() {
 
 			dr := (instr >> 9) & 0b111
 			pcoffset9 := (instr) & 0x1FF
-			// log.Printf("ldi")
+
+			log.Printf("0x%04x LDI: dr=%03b pcoffset9=0x%03x", register[PC], dr, pcoffset9)
+
 			register[dr] = mem_read(mem_read(register[PC] + sext(pcoffset9, 9)))
 			update_flags(dr)
 
 		case OP_LDR:
-			//log.Println("ldr")
 
 			dr := (instr >> 9) & 0b111
 			br := (instr >> 6) & 0b111
 			pcoffset6 := (instr) & 0x3F
+
+			log.Printf("0x%04x LDR: dr=%03b dr=%03b pcoffset6=0x%02x", register[PC], dr, br, pcoffset6)
 
 			register[dr] = mem_read(register[br] + sext(pcoffset6, 6))
 			update_flags(dr)
 
 		case OP_LEA:
-			//log.Println("lea")
 
 			dr := (instr >> 9) & 0b111
 			pcoffset9 := (instr) & 0x1FF
+
+			log.Printf("0x%04x LEA: dr=%03b pcoffset9=0x%03x", register[PC], dr, pcoffset9)
 
 			register[dr] = register[PC] + sext(pcoffset9, 9)
 			update_flags(dr)
 
 		case OP_RTI:
+			log.Printf("0x%04x RTI: unimplemented opcode", register[PC])
 
 		case OP_ST:
-			//log.Println("st")
-
 			sr := (instr >> 9) & 0b111
 			pcoffset9 := (instr) & 0x1FF
+
+			log.Printf("0x%04x ST: sr=%03b pcoffset9=0x%03x", register[PC], sr, pcoffset9)
+
 			computed_address := register[PC] + sext(pcoffset9, 9)
 			memory[computed_address] = register[sr]
 
 		case OP_STI:
-			//log.Println("sti")
-
 			sr := (instr >> 9) & 0b111
 			pcoffset9 := (instr) & 0x1FF
+
+			log.Printf("0x%04x STI: sr=%03b pcoffset9=0x%03x", register[PC], sr, pcoffset9)
 
 			memory[mem_read(register[PC]+sext(pcoffset9, 9))] = register[sr]
 
 		case OP_STR:
-			//log.Println("str")
-
 			sr := (instr >> 9) & 0b111
 			br := (instr >> 6) & 0b111
 			pcoffset6 := (instr) & 0x3F
+
+			log.Printf("0x%04x STR: sr=%03b br=%03b pcoffset6=0x%02x", register[PC], sr, br, pcoffset6)
+
 			computed_address := register[br] + sext(pcoffset6, 6)
 
 			memory[computed_address] = register[sr]
 
 		case OP_TRAP:
-			// log.Printf("trap %04x", instr&0xFF)
+			log.Printf("0x%04x TRAP: 0x%02x", register[PC], instr&0xFF)
 
 			switch instr & 0xFF {
 			case TRAP_GETC:
@@ -382,7 +418,7 @@ func process_keyboard() {
 }
 
 func read_program(file_name string) error {
-	//  //log.Println(file_name)
+	log.Printf("Loading: %s", file_name)
 	file, err := os.ReadFile(file_name)
 	if err != nil {
 		return err
@@ -402,18 +438,21 @@ func read_program_file(file *[]byte) error {
 	origin := int(uint16((*file)[0])<<8 | uint16((*file)[1]))
 
 	max_read := Memory_Mapped_Registers_Start - User_Space_Start
-	//log.Println(origin, (max_read), len(*file))
+	log.Printf("Size: %0.2f KB", float32(len(*file))/1024)
+
 	i := 0
 	for j := 2; j < min(int(max_read), len(*file)); j += 2 {
 		memory[origin+i] = uint16((*file)[j])<<8 | uint16((*file)[j+1])
 		i++
 	}
+
 	return nil
 
 }
 
 // this configures the terminal to run in canonical/raw mode
 func enable_raw_mode() {
+	log.Printf("enabling raw mode...")
 	termios.Tcgetattr(os.Stdin.Fd(), &orig_terminal_config)
 	new_termios := orig_terminal_config
 	new_termios.Lflag &^= unix.ICANON | unix.ECHO
@@ -421,6 +460,7 @@ func enable_raw_mode() {
 
 }
 func disable_raw_mode() {
+	log.Printf("disabling raw mode...")
 	termios.Tcsetattr(os.Stdin.Fd(), termios.TCSANOW, &orig_terminal_config)
 }
 
