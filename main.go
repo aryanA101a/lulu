@@ -29,9 +29,8 @@ const (
 	R6
 	R7
 	PC //Program Counter
-	// PSR //Processor Status Register
-	COUNT
 	COND
+	COUNT
 )
 
 var register = make([]uint16, 12)
@@ -42,14 +41,6 @@ var memory_mapped_register = struct {
 }{
 	Memory_Mapped_Registers_Start,
 	Memory_Mapped_Registers_Start + 0x0002,
-}
-
-var saved_stack_pointer_register = struct {
-	SSP, /* supervisor stack pointer */
-	USP uint16 /* user stack pointer */
-}{
-	0x2000,
-	0xc000,
 }
 
 // opcodes
@@ -124,14 +115,13 @@ func main() {
 		}
 
 	}
-	disable_input_buffering()
+	enable_raw_mode()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	defer restore_input_buffering()
+	defer disable_raw_mode()
 
 	go poll_keyboard()
 
-	// register[PSR] = 0x8000 | flags.ZRO
 	register[COND] = flags.ZRO
 	register[PC] = User_Space_Start
 
@@ -139,7 +129,6 @@ func main() {
 	for running {
 		process_keyboard()
 		instr := mem_read(register[PC])
-		//log.Printf("pc: %04x instr %04x\n", register[PC], instr)
 
 		register[PC]++
 		op := instr >> 12
@@ -196,9 +185,6 @@ func main() {
 			nzp := (instr >> 9) & 0b111
 			pcoffset9 := (instr) & 0x1FF
 			cond := register[COND]
-
-			// log.Printf("%d br %04x", nzp&cond, register[PC]+sext(pcoffset9, 9))
-			// log.Panicf("br %08b %04x\n", nzp, pcoffset9)
 
 			if (nzp & cond) != 0 {
 				register[PC] += sext(pcoffset9, 9)
@@ -260,35 +246,6 @@ func main() {
 			update_flags(dr)
 
 		case OP_RTI:
-			//log.Println("rti")
-
-			// if register[PSR]>>15 == 0 {
-
-			// 	addr, err := mem_read(register[R6])
-			// 	if err != nil {
-			// 		  log.Panicf("error executing RTI instruction: %s\n", err)
-			// 	}
-			// 	register[PC] = *addr
-
-			// 	register[R6]++
-
-			// 	saved_psr, err := mem_read(register[R6])
-			// 	if err != nil {
-			// 		  log.Panicf("error executing RTI instruction: %s\n", err)
-			// 	}
-
-			// 	register[R6]++
-
-			// 	register[PSR] = *saved_psr
-
-			// 	if register[PSR]>>15 == 1 {
-			// 		saved_stack_pointer_register.SSP = register[R6]
-			// 		register[R6] = saved_stack_pointer_register.USP
-			// 	}
-
-			// } else {
-			// 	//privilage mode exception
-			// }
 
 		case OP_ST:
 			//log.Println("st")
@@ -296,25 +253,15 @@ func main() {
 			sr := (instr >> 9) & 0b111
 			pcoffset9 := (instr) & 0x1FF
 			computed_address := register[PC] + sext(pcoffset9, 9)
-
-			// if (computed_address < User_Space_Start && computed_address >= System_Space_Start) &&
-			// 	register[PSR]>>15 == 1 {
-			//acv exception
-			// } else {
 			memory[computed_address] = register[sr]
-			// }
+
 		case OP_STI:
 			//log.Println("sti")
 
 			sr := (instr >> 9) & 0b111
 			pcoffset9 := (instr) & 0x1FF
 
-			// if (computed_address < User_Space_Start && computed_address >= System_Space_Start) &&
-			// 	register[PSR]>>15 == 1 {
-			//acv exception
-			// } else {
 			memory[mem_read(register[PC]+sext(pcoffset9, 9))] = register[sr]
-			// }
 
 		case OP_STR:
 			//log.Println("str")
@@ -324,36 +271,13 @@ func main() {
 			pcoffset6 := (instr) & 0x3F
 			computed_address := register[br] + sext(pcoffset6, 6)
 
-			// if (computed_address < User_Space_Start && computed_address >= System_Space_Start) &&
-			// 	register[PSR]>>15 == 1 {
-			// 	//acv exception
-			// } else {
 			memory[computed_address] = register[sr]
-			// }
 
 		case OP_TRAP:
 			// log.Printf("trap %04x", instr&0xFF)
 
-			// temp := register[PSR]
-			// if register[PSR]>>15 == 1 {
-			// 	saved_stack_pointer_register.USP = register[R6]
-			// 	register[R6] = saved_stack_pointer_register.SSP
-			// 	register[PSR] |= 0x8000
-			// }
-			// register[R6]++
-			// memory[register[R6]] = temp
-			// register[R6]++
-			// memory[register[R6]] = register[PC]
-
-			// register[PC] = mem_read(zext(trapvect8))
-
 			switch instr & 0xFF {
 			case TRAP_GETC:
-				// char, err := stdinReader.ReadByte()
-				// if err != nil {
-				// 	log.Panicf("error executing trap GETC: %s\n", err)
-				// }
-				//log.Printf("%0x %c",char,char)
 				register[R0] = uint16(<-keyBuffer)
 				update_flags(R0)
 
@@ -379,9 +303,7 @@ func main() {
 					log.Panicf("error executing trap IN: %s\n", err)
 				}
 				c := <-keyBuffer
-				// if err != nil {
-				// 	log.Panicf("error executing trap IN: %s\n", err)
-				// }
+
 				_, err = stdoutWriter.Write([]byte{c})
 				if err != nil {
 					log.Panicf("error executing trap IN: %s\n", err)
@@ -419,13 +341,9 @@ func main() {
 	select {
 	case <-ctx.Done():
 		//log.Printf("exiting!!!!!")
-		restore_input_buffering()
+		disable_raw_mode()
 	}
 
-}
-
-func swap16(x uint16) uint16 {
-	return (x << 8) | (x >> 8)
 }
 
 func update_flags(r uint16) {
@@ -436,14 +354,6 @@ func update_flags(r uint16) {
 	} else {
 		register[COND] = flags.POS
 	}
-	// register[PSR] &= 0xFFF8
-	// if register[r] == 0 {
-	// 	register[PSR] |= flags.ZRO
-	// } else if register[r]>>15 == 1 {
-	// 	register[PSR] |= flags.NEG
-	// } else {
-	// 	register[PSR] |= flags.POS
-	// }
 }
 
 // sign extend
@@ -460,7 +370,6 @@ func mem_read(addr uint16) uint16 {
 	if addr == memory_mapped_register.KBDR {
 		memory[memory_mapped_register.KBSR] &= 0x7FFF
 	}
-	//log.Printf("mem_read-> value:%04x at address:%04x", memory[addr], addr)
 	return memory[addr]
 }
 
@@ -471,15 +380,6 @@ func process_keyboard() {
 
 	}
 }
-
-// func check_key() (int, error) {
-// 	var readFds unix.FdSet
-// 	readFds.Zero()
-// 	readFds.Set(int(os.Stdin.Fd()))
-
-// 	var timeout unix.Timeval
-// 	return unix.Select(1, &readFds, nil, nil, &timeout)
-// }
 
 func read_program(file_name string) error {
 	//  //log.Println(file_name)
@@ -492,38 +392,35 @@ func read_program(file_name string) error {
 
 }
 
-// todo: handle program memory boundary
 func read_program_file(file *[]byte) error {
 	if len(*file) < 4 {
 		return fmt.Errorf("Error: File is too short.")
 	}
 
 	/* origin tells us where in memory to place the image
-	convert to native endianess as lc3 programs are big endian */
-	origin := int(swap16(uint16((*file)[1]) | uint16((*file)[0])))
+	most of the x86 systems are little endian, therefore keeping the byte sequence same as of the lc3 architecture(big endian)   */
+	origin := int(uint16((*file)[0])<<8 | uint16((*file)[1]))
 
-	max_read := User_Space_Start - saved_stack_pointer_register.USP
+	max_read := Memory_Mapped_Registers_Start - User_Space_Start
 	//log.Println(origin, (max_read), len(*file))
 	i := 0
 	for j := 2; j < min(int(max_read), len(*file)); j += 2 {
-		//  //log.Printf("address:%04x value:%04x", origin+i, uint16((*file)[j])<<8|uint16((*file)[j+1]))
 		memory[origin+i] = uint16((*file)[j])<<8 | uint16((*file)[j+1])
 		i++
 	}
-	// //log.Println(j+2)
 	return nil
 
 }
 
-func disable_input_buffering() {
+// this configures the terminal to run in canonical/raw mode
+func enable_raw_mode() {
 	termios.Tcgetattr(os.Stdin.Fd(), &orig_terminal_config)
 	new_termios := orig_terminal_config
-	//todo: add sigint flag
 	new_termios.Lflag &^= unix.ICANON | unix.ECHO
 	termios.Tcsetattr(os.Stdin.Fd(), termios.TCSANOW, &new_termios)
 
 }
-func restore_input_buffering() {
+func disable_raw_mode() {
 	termios.Tcsetattr(os.Stdin.Fd(), termios.TCSANOW, &orig_terminal_config)
 }
 
