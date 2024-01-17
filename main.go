@@ -140,9 +140,19 @@ func main() {
 	}
 
 	enable_raw_mode()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, unix.SIGINT,unix.SIGTSTP)
 	defer stop()
-	defer disable_raw_mode()
+
+	go func(){
+		<-ctx.Done()
+		
+		defer fmt.Println("hello")
+		disable_raw_mode()
+		log.Println("exiting!!")
+		os.Exit(0)
+		
+	}()
+	
 
 	go poll_keyboard()
 
@@ -374,11 +384,6 @@ func main() {
 
 	}
 
-	select {
-	case <-ctx.Done():
-		//log.Printf("exiting!!!!!")
-		disable_raw_mode()
-	}
 
 }
 
