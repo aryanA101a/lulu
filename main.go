@@ -288,7 +288,7 @@ func main() {
 			log.Printf("0x%04x ST: sr=%03b pcoffset9=0x%03x", register[PC], sr, pcoffset9)
 
 			computed_address := register[PC] + sext(pcoffset9, 9)
-			memory[computed_address] = register[sr]
+			mem_write(computed_address, register[sr])
 
 		case OP_STI:
 			sr := (instr >> 9) & 0b111
@@ -296,7 +296,7 @@ func main() {
 
 			log.Printf("0x%04x STI: sr=%03b pcoffset9=0x%03x", register[PC], sr, pcoffset9)
 
-			memory[mem_read(register[PC]+sext(pcoffset9, 9))] = register[sr]
+			mem_write(mem_read(register[PC]+sext(pcoffset9, 9)), register[sr])
 
 		case OP_STR:
 			sr := (instr >> 9) & 0b111
@@ -307,7 +307,7 @@ func main() {
 
 			computed_address := register[br] + sext(pcoffset6, 6)
 
-			memory[computed_address] = register[sr]
+			mem_write(computed_address, register[sr])
 
 		case OP_TRAP:
 			log.Printf("0x%04x TRAP: 0x%02x", register[PC], instr&0xFF)
@@ -407,6 +407,13 @@ func mem_read(addr uint16) uint16 {
 		memory[memory_mapped_register.KBSR] &= 0x7FFF
 	}
 	return memory[addr]
+}
+
+func mem_write(addr, value uint16) {
+	if addr == memory_mapped_register.KBSR || addr == memory_mapped_register.KBDR {
+		return
+	}
+	memory[addr] = value
 }
 
 func process_keyboard() {
