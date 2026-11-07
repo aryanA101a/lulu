@@ -67,11 +67,11 @@ type cpu struct {
 }
 
 func (cpu *cpu) start() {
-	go cpu.io.pollKeyboard(cpu.memRead)
+	go cpu.io.pollKeyboard()
 	cpu.running = true
 
 	for cpu.running {
-		cpu.io.processKeyboard(cpu.memory.read, cpu.memory.write)
+		cpu.io.processKeyboard(false, cpu.memory.read, cpu.memory.write)
 		instruction := cpu.memRead(cpu.internalRegisters.pc)
 		cpu.internalRegisters.pc++
 		cpu.decodeAndExecuteInstruction(instruction)
@@ -241,7 +241,8 @@ func (cpu *cpu) decodeAndExecuteInstruction(instruction word) {
 
 		switch instruction & 0xFF {
 		case TRAP_GETC:
-			cpu.generalPurposeRegisters[R0] = word(<-cpu.io.keyBuffer)
+			cpu.io.processKeyboard(true, cpu.memory.read, cpu.memory.write)
+			cpu.generalPurposeRegisters[R0] = cpu.memRead(KBDR)
 			cpu.updateFlags(R0)
 
 		case TRAP_OUT:
@@ -260,11 +261,12 @@ func (cpu *cpu) decodeAndExecuteInstruction(instruction word) {
 		case TRAP_IN:
 			cpu.io.stdoutWriter.Write([]byte("Enter a character: "))
 
-			c := <-cpu.io.keyBuffer
+			cpu.io.processKeyboard(true, cpu.memory.read, cpu.memory.write)
+			c := cpu.memRead(KBDR)
 
-			cpu.io.stdoutWriter.Write([]byte{c})
+			cpu.io.stdoutWriter.Write([]byte{byte(c)})
 
-			cpu.generalPurposeRegisters[R0] = word(c)
+			cpu.generalPurposeRegisters[R0] = c
 			cpu.updateFlags(R0)
 
 		case TRAP_PUTSP:
