@@ -12,6 +12,11 @@ type VM struct {
 
 func (vm *VM) Start(program *[]byte) {
 	vm.cpu.io.enableRawMode()
+	if !vm.cpu.io.enableNonblockingInput() {
+		vm.cpu.io.disableRawMode()
+		return
+	}
+	defer vm.cpu.io.restoreInputFlags()
 	vm.readProgramFile(program)
 	vm.cpu.start()
 }
@@ -19,6 +24,7 @@ func (vm *VM) Start(program *[]byte) {
 func (vm *VM) Stop(){
 	vm.cpu.stop()
 	vm.cpu.io.disableRawMode()
+	vm.cpu.io.restoreInputFlags()
 	vm.cpu.io.stdoutWriter.Write([]byte("\n"))
 }
 
